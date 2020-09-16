@@ -1,13 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"net/http"
-	"net/url"
 	"os"
-	"reflect"
 	"strconv"
 
 	"github.com/localtunnel/go-localtunnel"
@@ -19,20 +18,22 @@ const displayName = "P2PWN Ready Go WSS"
 const appRelease = "DEVELOPMENT"
 
 // App  Config
-var Config = &appConfig{}
-
+// options to be sent to PTPWN Service during /api/connect
 type appConfig struct {
 	AppName     string `json:"app_name"`     // for grouping rooms in P2PWN
 	DisplayName string `json:"display_name"` // used to display in P2PWN lobby
 	Release     string `json:"release"`      // "PRODUCTION", "DEVELOPMENT"
 	EntryURL    string `json:"entry_url"`    // url used as the entrypoint for your app, supplied by localtunnel
 	Port        string // Server Listening Port
-	P2pwn       string // P2PWN Service Address
+	P2pwnAddr   string // P2PWN Service Address
+	// optional
+	// HealthCheckURL string `json:"healthcheck_url"` // default: entry_url, if server cannot reach this endpoint, it will be unlisted
 }
 
-// P2PWN Service Config
-var P2pwn = &p2pwnConfig{}
+var Config = &appConfig{}
 
+// P2PWN Service Config
+// values returned from P2PWN Service response to /api/connect
 type p2pwnConfig struct { // all values will be provided by P2PWN
 	ID          string `json:"id"`           // public id assigned by P2PWN service
 	AccessToken string `json:"access_token"` // private access token needed to perform actions on this host
@@ -41,29 +42,15 @@ type p2pwnConfig struct { // all values will be provided by P2PWN
 	EntryURL    string `json:"entry_url"`    // url used as the entrypoint for your app, supplied by localtunnel
 }
 
-func setConfig(configPtr *string, flagName string, defaultVal string, help string) {
-	flag.StringVar(configPtr, flagName, defaultVal, help)
-
-	if val, ok := os.LookupEnv(flagName); ok {
-		*configPtr = val
-	}
-}
-
-func structToMap(i interface{}) (values url.Values) {
-	values = url.Values{}
-	iVal := reflect.ValueOf(i).Elem()
-	typ := iVal.Type()
-	for i := 0; i < iVal.NumField(); i++ {
-		values.Set(typ.Field(i).Name, fmt.Sprint(iVal.Field(i)))
-	}
-	return
-}
+var P2pwn = &p2pwnConfig{}
 
 func main() {
 
+	//================== P2PWN Setup Begin =====================//
+
 	setConfig(&Config.AppName, "name", appName, "Name of this app")
 	setConfig(&Config.Port, "port", "3000", "Port for server to listen on")
-	setConfig(&Config.P2pwn, "p2pwn", "https://p2pwithme.2018.nodeknockout.com", "P2PWN Service Address")
+	setConfig(&Config.P2pwnAddr, "p2pwn", "https://p2pwn-production.herokuapp.com", "P2PWN Service Address")
 	Config.DisplayName = displayName
 	Config.Release = appRelease
 
@@ -86,8 +73,9 @@ func main() {
 	}
 
 	Config.EntryURL = lt.URL()
+	payload, _ := json.Marshal(Config)
 
-	p2pwnRes, p2pwnErr := http.PostForm(Config.P2pwn, structToMap(Config))
+	p2pwnRes, p2pwnErr := http.Post(Config.P2pwnAddr+"/api/connect", "application/json", bytes.NewBuffer(payload))
 	if p2pwnErr != nil {
 		fmt.Printf("Error Connecting to P2PWN Service: %v\n", p2pwnErr)
 		os.Exit(1)
@@ -103,6 +91,10 @@ func main() {
 
 	fmt.Printf("P2PWN is Ready: %+v\n", P2pwn)
 
+	//------------------ P2PWN Setup Complete ---------------------//
+
+	//================== Begin your app code  =====================//
+
 	// Setup your handlers
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
@@ -115,4 +107,14 @@ func main() {
 
 	fmt.Printf("Server is listening on %v\n", server.Addr)
 	server.Serve(lt)
+
+	//------------------ End your app code -------------------------//
+}
+
+func setConfig(configPtr *string, flagName string, defaultVal string, help string) {
+	flag.StringVar(configPtr, flagName, defaultVal, help)
+
+	if val, ok := os.LookupEnv(flagName); ok {
+		*configPtr = val
+	}
 }
